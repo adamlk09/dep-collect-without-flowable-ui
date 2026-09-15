@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: segmentation-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/segmentation_service}
+    username: ${DB_USER:collector}
+    password: ${DB_PASSWORD:collector}
+
+server:
+  port: ${SERVER_PORT:8092}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+flowable:
+  dmn:
+    database-schema-update: true
+    strict-mode: false
+
+app:
+  bounded-context: segmentation
+  capabilities: DMN decisions,simulation,decision traces
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},%X{correlationId:-}]"

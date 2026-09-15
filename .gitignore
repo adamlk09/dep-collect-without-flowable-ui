@@ -1,0 +1,21 @@
+﻿# Build output
+target/
+
+# Local runtime logs
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env overrides
+.env
+.env.local
