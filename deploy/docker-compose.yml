@@ -1,0 +1,132 @@
+# Deploiement MERCURE Collect AI a partir des images Docker Hub (adamlk/*).
+# Usage: cp .env.example .env && docker compose up -d
+x-java: &java
+  restart: unless-stopped
+
+services:
+  postgres-micro:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: collector
+      POSTGRES_PASSWORD: ${MICRO_DB_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
+      - micro-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U collector"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-collect:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: debt_collect_db
+      POSTGRES_USER: collect_user
+      POSTGRES_PASSWORD: ${COLLECT_DB_PASSWORD}
+    volumes:
+      - collect-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U collect_user -d debt_collect_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:v1.31.3
+    restart: unless-stopped
+    ports:
+      - "8025:8025"   # UI (retirer en production si un vrai SMTP est utilise)
+
+  segmentation-service:
+    <<: *java
+    image: adamlk/segmentation-service:latest
+    depends_on:
+      postgres-micro: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:postgresql://postgres-micro:5432/segmentation_service
+      DB_USER: collector
+      DB_PASSWORD: ${MICRO_DB_PASSWORD}
+
+  case-service:
+    <<: *java
+    image: adamlk/case-service:latest   # a publier avant le deploiement
+    depends_on:
+      postgres-micro: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:postgresql://postgres-micro:5432/case_service
+      DB_USER: collector
+      DB_PASSWORD: ${MICRO_DB_PASSWORD}
+
+  notification-service:
+    <<: *java
+    image: adamlk/notification-service:latest
+    depends_on:
+      postgres-micro: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:postgresql://postgres-micro:5432/notification_service
+      DB_USER: collector
+      DB_PASSWORD: ${MICRO_DB_PASSWORD}
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+
+  workflow-service:
+    <<: *java
+    image: adamlk/workflow-service:latest
+    depends_on:
+      postgres-micro: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:postgresql://postgres-micro:5432/workflow_service
+      DB_USER: collector
+      DB_PASSWORD: ${MICRO_DB_PASSWORD}
+      DEBT_COLLECTION_BASE_URL: http://collect-api:9090
+      DEBT_COLLECTION_SERVICE_TOKEN: ${SERVICE_TOKEN}
+      CASE_SERVICE_URL: http://case-service:8091
+      NOTIFICATION_SERVICE_URL: http://notification-service:8095
+
+  collect-api:
+    <<: *java
+    image: adamlk/collect-api:latest
+    depends_on:
+      postgres-collect: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:postgresql://postgres-collect:5432/debt_collect_db
+      DB_USERNAME: collect_user
+      DB_PASSWORD: ${COLLECT_DB_PASSWORD}
+      INTEGRATION_TENANT_ID: ${TENANT_ID}
+      INTEGRATION_SERVICE_TOKEN: ${SERVICE_TOKEN}
+      SEGMENTATION_SERVICE_URL: http://segmentation-service:8092
+      WORKFLOW_SERVICE_URL: http://workflow-service:8094
+
+  api-gateway:
+    <<: *java
+    image: adamlk/api-gateway:latest
+    depends_on:
+      - collect-api
+      - segmentation-service
+      - workflow-service
+      - notification-service
+    environment:
+      COLLECT_API_URL: http://collect-api:9090
+      SEGMENTATION_SERVICE_URL: http://segmentation-service:8092
+      WORKFLOW_SERVICE_URL: http://workflow-service:8094
+      NOTIFICATION_SERVICE_URL: http://notification-service:8095
+
+  new-frontend:
+    <<: *java
+    image: adamlk/new-frontend:latest
+    depends_on:
+      - api-gateway
+    environment:
+      API_GATEWAY_URL: http://api-gateway:8090
+    ports:
+      - "${FRONTEND_PORT:-80}:8080"
+
+volumes:
+  micro-data:
+  collect-data:
